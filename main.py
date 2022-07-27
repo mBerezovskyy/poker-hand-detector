@@ -1,7 +1,7 @@
 import cv2
 import cvzone
 
-img_orig = cv2.imread('testing_images/card7.jpg')
+img_orig = cv2.imread('testing_images/card5.jpg')
 img_gray = cv2.cvtColor(src=img_orig, code=cv2.COLOR_BGR2GRAY)
 
 img_resized_gray = cv2.resize(src=img_gray, dsize=None, dst=None, fx=0.35, fy=0.35)
