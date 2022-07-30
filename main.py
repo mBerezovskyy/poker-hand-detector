@@ -2,13 +2,13 @@ import cv2
 import cvzone
 import numpy as np
 
-img_orig = cv2.imread('testing_images/card6.jpg')
+img_orig = cv2.imread('testing_images/img_normal_size.jpg')
 img_gray = cv2.cvtColor(src=img_orig, code=cv2.COLOR_BGR2GRAY)
 
-img_resized_gray = cv2.resize(src=img_gray, dsize=None, dst=None, fx=0.35, fy=0.35)
-img_resized_orig = cv2.resize(src=img_orig, dsize=None, dst=None, fx=0.35, fy=0.35)
+# img_resized_gray = cv2.resize(src=img_gray, dsize=None, dst=None, fx=0.35, fy=0.35)
+# img_resized_orig = cv2.resize(src=img_orig, dsize=None, dst=None, fx=0.35, fy=0.35)
 
-equalized = cv2.equalizeHist(src=img_resized_gray)
+equalized = cv2.equalizeHist(src=img_gray)
 
 blur = cv2.GaussianBlur(src=equalized, ksize=(7, 7), sigmaX=0)
 
@@ -48,17 +48,47 @@ def order_points(points):
         'tr': right_points[int(not bottom_right_point_idx)],
     }
 
-    for key, val in correct_order.items():
-        cvzone.putTextRect(
-            img=img_resized_orig,
-            text=f'{key}',
-            pos=(val[0], val[1] - 10),
-            scale=2,
-            thickness=1,
-            offset=2
-        )
+    # for key, val in correct_order.items():
+    #     cvzone.putTextRect(
+    #         img=img_resized_orig,
+    #         text=f'{key}',
+    #         pos=(val[0], val[1] - 10),
+    #         scale=2,
+    #         thickness=1,
+    #         offset=2
+    #     )
 
     return correct_order
+
+
+def transform_points(points):
+    tl = points['tl']
+    bl = points['bl']
+    br = points['br']
+    tr = points['tr']
+
+    right_height = abs(tr[1] - br[1])
+    left_height = abs(tl[1] - bl[1])
+    height = max(right_height, left_height)
+
+    top_width = abs(tr[0] - tl[0])
+    bottom_width = abs(br[0] - bl[0])
+    width = max(top_width, bottom_width)
+
+    dst = np.array([[0, 0],
+                    [0, height],
+                    [width, 0],
+                    [width, height]], dtype=np.float32)
+
+    pts = np.array([tl,
+                    bl,
+                    tr,
+                    br], dtype=np.float32)
+
+    M = cv2.getPerspectiveTransform(pts, dst)
+    warped = cv2.warpPerspective(img_orig, M, (width, height))
+
+    return warped
 
 
 def locate_cards():
@@ -68,21 +98,24 @@ def locate_cards():
         if 20_000 < area < 100_000:
             x, y, w, h = cv2.boundingRect(c)
 
-            cv2.drawContours(image=img_resized_orig, contours=contours, contourIdx=idx, color=(0, 255, 0),
-                             thickness=2)
+            # cv2.drawContours(image=img_resized_orig, contours=contours, contourIdx=idx, color=(0, 255, 0),
+            #                  thickness=2)
             #
             # cvzone.putTextRect(img=img_resized_orig, text=str(area), pos=(x, y))
 
             epsilon = 0.03 * cv2.arcLength(curve=c, closed=True)
 
             corner_points = cv2.approxPolyDP(curve=c, epsilon=epsilon, closed=True)
-
             formatted_points = format_points(corner_points)
-            print(order_points(formatted_points))
+            ordered_points = order_points(formatted_points)
+            warped_image = transform_points(ordered_points)
+
+            cv2.imshow(f'card#{idx}', warped_image)
+            cv2.waitKey(0)
 
             for point in corner_points:
                 cv2.circle(
-                    img=img_resized_orig,
+                    img=img_orig,
                     center=(point[0][0], point[0][1]),
                     radius=4,
                     color=(0, 0, 255),
@@ -92,5 +125,5 @@ def locate_cards():
 
 locate_cards()
 
-cv2.imshow('img_resized_orig', img_resized_orig)
+cv2.imshow('img_resized_orig', img_orig)
 cv2.waitKey(0)
