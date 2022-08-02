@@ -2,9 +2,11 @@ import os
 
 import cv2
 import cvzone
+import pytesseract
 import numpy as np
+import re
 
-img_orig = cv2.imread('testing_images/card4.jpg')
+img_orig = cv2.imread('testing_images/card9.jpg')
 img_gray = cv2.cvtColor(src=img_orig, code=cv2.COLOR_BGR2GRAY)
 
 img_resized_gray = cv2.resize(src=img_gray, dsize=None, dst=None, fx=0.35, fy=0.35)
@@ -13,9 +15,7 @@ img_resized_orig = cv2.resize(src=img_orig, dsize=None, dst=None, fx=0.35, fy=0.
 clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(9, 9))
 equalized = clahe.apply(img_resized_gray)
 
-
 blur = cv2.GaussianBlur(src=equalized, ksize=(7, 7), sigmaX=0)
-
 
 thresh = cv2.adaptiveThreshold(src=blur, maxValue=255, adaptiveMethod=cv2.ADAPTIVE_THRESH_MEAN_C,
                                thresholdType=cv2.THRESH_BINARY, blockSize=7, C=3)
@@ -118,7 +118,7 @@ def detect_suit(img):
     width_cropped = w // 5
     height_cropped = h // 4
 
-    suit_and_number_part = img[0:height_cropped, 0:width_cropped]
+    suit_and_number_part = img[25:height_cropped, 0:width_cropped]
 
     suit_shapes = get_suit_shapes()
 
@@ -130,6 +130,8 @@ def detect_suit(img):
     result = cv2.bitwise_and(suit_and_number_part, suit_and_number_part, mask=mask)
 
     result = cv2.cvtColor(src=result, code=cv2.COLOR_BGR2GRAY)
+
+    # cv2.imshow('1', suit_and_number_part)
 
     number_of_white_pixels = cv2.countNonZero(src=result)
 
@@ -180,7 +182,51 @@ def detect_suit(img):
             card_back_similarity: 'card_back'
         }
 
+        # print(f'spade_similarity: {spade_similarity}')
+        # print(f'club_similarity: {club_similarity}')
+        # print(f'card_back_similarity: {card_back_similarity}')
+
+        # cv2.waitKey(0)
+
         return suit[min(spade_similarity, club_similarity, card_back_similarity)]
+
+
+def detect_number(img, suit):
+    if suit == 'card_back':
+        return ''
+
+    h, w, c = img.shape
+
+    width_cropped = w // 6
+    height_cropped = h // 5
+
+    number_part = img[0:height_cropped, 0:width_cropped]
+
+    number_part_gray = cv2.cvtColor(src=number_part, code=cv2.COLOR_BGR2GRAY)
+
+    number_part_gray = cv2.resize(number_part_gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+
+    blur = cv2.GaussianBlur(src=number_part_gray, ksize=(3, 3), sigmaX=0)
+
+    thresh = cv2.adaptiveThreshold(src=blur, maxValue=255, adaptiveMethod=cv2.ADAPTIVE_THRESH_MEAN_C,
+                                   thresholdType=cv2.THRESH_BINARY, blockSize=13, C=7)
+
+    kernel = np.ones((3, 3), np.uint8)
+
+    dilate = cv2.erode(src=thresh, kernel=kernel, iterations=1)
+
+    custom_oem_psm_config = r'--oem 3 --psm 8'
+    res = pytesseract.image_to_string(dilate, config=custom_oem_psm_config)
+
+    res = re.sub('[^A-Za-z0-9]+', '', res)
+
+    high_order_cards = ['J', 'Q', 'K', 'A']
+
+    for card in high_order_cards:
+        if card in res:
+            return card
+
+    return res.strip()
 
 
 def locate_cards():
@@ -197,19 +243,11 @@ def locate_cards():
             ordered_points = order_points(formatted_points)
             warped_image = transform_points(ordered_points)
 
-            h, w, c = warped_image.shape
-
-            width_cropped = w // 5
-            height_cropped = h // 4
-
-            suit_and_number_part = warped_image[0:height_cropped, 0:width_cropped]
-
             suit = detect_suit(warped_image)
-
-            cvzone.putTextRect(img=img_resized_orig, text=suit, pos=(x, y), scale=2, thickness=2)
+            number = detect_number(warped_image, suit)
+            cvzone.putTextRect(img=img_resized_orig, text=f'{number} {suit}', pos=(x, y), scale=2, thickness=2)
 
 
 locate_cards()
 cv2.imshow('cards', img_resized_orig)
 cv2.waitKey(0)
-
