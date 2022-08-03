@@ -6,26 +6,10 @@ import pytesseract
 import numpy as np
 import re
 
-img_orig = cv2.imread('testing_images/card9.jpg')
-img_gray = cv2.cvtColor(src=img_orig, code=cv2.COLOR_BGR2GRAY)
+img_orig = cv2.imread('testing_images/card14.jpg')
 
-img_resized_gray = cv2.resize(src=img_gray, dsize=None, dst=None, fx=0.35, fy=0.35)
+
 img_resized_orig = cv2.resize(src=img_orig, dsize=None, dst=None, fx=0.35, fy=0.35)
-
-clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(9, 9))
-equalized = clahe.apply(img_resized_gray)
-
-blur = cv2.GaussianBlur(src=equalized, ksize=(7, 7), sigmaX=0)
-
-thresh = cv2.adaptiveThreshold(src=blur, maxValue=255, adaptiveMethod=cv2.ADAPTIVE_THRESH_MEAN_C,
-                               thresholdType=cv2.THRESH_BINARY, blockSize=7, C=3)
-
-thresh = cv2.bitwise_not(src=thresh)
-
-contours, hierarchy = cv2.findContours(image=thresh, mode=cv2.RETR_EXTERNAL, method=cv2.CHAIN_APPROX_SIMPLE)
-contours = sorted(contours, key=lambda c: cv2.contourArea(c), reverse=True)
-
-points = {}
 
 
 def format_points(points):
@@ -57,7 +41,7 @@ def order_points(points):
     return correct_order
 
 
-def transform_points(points):
+def transform_points(points, img):
     tl = points['tl']
     bl = points['bl']
     br = points['br']
@@ -82,7 +66,7 @@ def transform_points(points):
                     br], dtype=np.float32)
 
     M = cv2.getPerspectiveTransform(pts, dst)
-    warped = cv2.warpPerspective(img_resized_orig, M, (width, height))
+    warped = cv2.warpPerspective(img, M, (width, height))
 
     return warped
 
@@ -113,36 +97,37 @@ def get_suit_shapes():
 
 
 def detect_suit(img):
-    h, w, c = img.shape
-
-    width_cropped = w // 5
-    height_cropped = h // 4
-
+    H, W, C = img.shape
+    width_cropped = W // 5
+    height_cropped = H // 4
     suit_and_number_part = img[25:height_cropped, 0:width_cropped]
 
     suit_shapes = get_suit_shapes()
 
     image = cv2.cvtColor(suit_and_number_part, cv2.COLOR_BGR2HSV)
-
     lower = np.array([0, 98, 0])
     upper = np.array([179, 255, 255])
     mask = cv2.inRange(image, lower, upper)
     result = cv2.bitwise_and(suit_and_number_part, suit_and_number_part, mask=mask)
-
     result = cv2.cvtColor(src=result, code=cv2.COLOR_BGR2GRAY)
 
-    # cv2.imshow('1', suit_and_number_part)
+    card_gray = cv2.cvtColor(src=img, code=cv2.COLOR_BGR2GRAY)
+    ret, thresh = cv2.threshold(src=card_gray, thresh=127, maxval=255, type=cv2.THRESH_BINARY)
+    kernel = np.ones((3, 3), np.uint8)
+    eroded = cv2.erode(src=thresh, kernel=kernel, iterations=1)
+
+    number_of_black_pixels = (W*H) - cv2.countNonZero(src=eroded)
+    percentage_of_black = number_of_black_pixels / (W * H) * 100
+
+    if percentage_of_black > 62:
+        return 'card_back'
 
     number_of_white_pixels = cv2.countNonZero(src=result)
-
     warped_image_gray = cv2.cvtColor(src=suit_and_number_part, code=cv2.COLOR_BGR2GRAY)
-
     ret, thresh = cv2.threshold(src=warped_image_gray, thresh=150, maxval=255, type=cv2.THRESH_BINARY)
-
     thresh = cv2.bitwise_not(src=thresh)
 
     contours, hierarchy = cv2.findContours(image=thresh, mode=cv2.RETR_LIST, method=cv2.CHAIN_APPROX_NONE)
-
     contours = sorted(contours, key=lambda c: cv2.contourArea(c), reverse=True)
 
     if number_of_white_pixels > 200:
@@ -164,7 +149,6 @@ def detect_suit(img):
     else:
         spade_shape = suit_shapes['spade']
         club_shape = suit_shapes['club']
-        card_back_shape = suit_shapes['card_back']
 
         spade_similarity = min(
             [cv2.matchShapes(contour1=spade_shape, contour2=c, method=1, parameter=0.0) for c in contours[:2]])
@@ -172,15 +156,9 @@ def detect_suit(img):
         club_similarity = min([cv2.matchShapes(contour1=club_shape, contour2=c, method=1, parameter=0.0) for c in
                                contours[:2]])
 
-        card_back_similarity = min(
-            [cv2.matchShapes(contour1=card_back_shape, contour2=c, method=1, parameter=0.0) for c in
-             contours[:2]])
-
         suit = {
             spade_similarity: 'spade',
-            club_similarity: 'club',
-            card_back_similarity: 'card_back'
-        }
+            club_similarity: 'club'        }
 
         # print(f'spade_similarity: {spade_similarity}')
         # print(f'club_similarity: {club_similarity}')
@@ -188,7 +166,7 @@ def detect_suit(img):
 
         # cv2.waitKey(0)
 
-        return suit[min(spade_similarity, club_similarity, card_back_similarity)]
+        return suit[min(spade_similarity, club_similarity)]
 
 
 def detect_number(img, suit):
@@ -229,25 +207,68 @@ def detect_number(img, suit):
     return res.strip()
 
 
-def locate_cards():
-    for idx, c in enumerate(contours):
-        area = cv2.contourArea(c)
+def locate_cards(img):
+    img_gray = cv2.cvtColor(src=img, code=cv2.COLOR_BGR2GRAY)
+
+    clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(9, 9))
+    equalized = clahe.apply(img_gray)
+
+    blur = cv2.GaussianBlur(src=equalized, ksize=(7, 7), sigmaX=0)
+
+    thresh = cv2.adaptiveThreshold(src=blur, maxValue=255, adaptiveMethod=cv2.ADAPTIVE_THRESH_MEAN_C,
+                                   thresholdType=cv2.THRESH_BINARY, blockSize=7, C=3)
+    thresh = cv2.bitwise_not(src=thresh)
+
+    orig_h, orig_w = thresh.shape
+
+    deck = thresh.copy()
+    hand = thresh.copy()
+
+    deck[orig_h // 2:orig_h, 0:orig_w] = 0.0
+    hand[0:orig_h // 2, 0:orig_w] = 0.0
+
+    deck_thresh, hierarchy = cv2.findContours(image=deck, mode=cv2.RETR_EXTERNAL, method=cv2.CHAIN_APPROX_SIMPLE)
+    deck_thresh = sorted(deck_thresh, key=lambda c: cv2.contourArea(c), reverse=True)
+
+    hand_thresh, hierarchy = cv2.findContours(image=hand, mode=cv2.RETR_EXTERNAL, method=cv2.CHAIN_APPROX_SIMPLE)
+    hand_thresh = sorted(hand_thresh, key=lambda c: cv2.contourArea(c), reverse=True)
+
+    for deck_c in deck_thresh:
+        area = cv2.contourArea(deck_c)
 
         if 20_000 < area < 150_000:
-            x, y, w, h = cv2.boundingRect(c)
+            x, y, w, h = cv2.boundingRect(deck_c)
 
-            epsilon = 0.03 * cv2.arcLength(curve=c, closed=True)
+            epsilon = 0.03 * cv2.arcLength(curve=deck_c, closed=True)
 
-            corner_points = cv2.approxPolyDP(curve=c, epsilon=epsilon, closed=True)
+            corner_points = cv2.approxPolyDP(curve=deck_c, epsilon=epsilon, closed=True)
             formatted_points = format_points(corner_points)
             ordered_points = order_points(formatted_points)
-            warped_image = transform_points(ordered_points)
+            warped_image = transform_points(ordered_points, img)
 
             suit = detect_suit(warped_image)
             number = detect_number(warped_image, suit)
-            cvzone.putTextRect(img=img_resized_orig, text=f'{number} {suit}', pos=(x, y), scale=2, thickness=2)
+            cvzone.putTextRect(img=img, text=f'{number} {suit}', pos=(x, y), scale=2, thickness=2, colorR=(255, 130, 0))
+
+    for hand_c in hand_thresh:
+        area = cv2.contourArea(hand_c)
+
+        if 20_000 < area < 150_000:
+            x, y, w, h = cv2.boundingRect(hand_c)
+
+            epsilon = 0.03 * cv2.arcLength(curve=hand_c, closed=True)
+
+            corner_points = cv2.approxPolyDP(curve=hand_c, epsilon=epsilon, closed=True)
+            formatted_points = format_points(corner_points)
+            ordered_points = order_points(formatted_points)
+            warped_image = transform_points(ordered_points, img)
+
+            suit = detect_suit(warped_image)
+            number = detect_number(warped_image, suit)
+            cvzone.putTextRect(img=img, text=f'{number} {suit}', pos=(x, y), scale=2, thickness=2, colorR=(0, 50, 255))
+
+    cv2.imshow('cards', img)
 
 
-locate_cards()
-cv2.imshow('cards', img_resized_orig)
+locate_cards(img_resized_orig)
 cv2.waitKey(0)
