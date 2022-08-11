@@ -6,8 +6,9 @@ import pytesseract
 import numpy as np
 import re
 
-img_orig = cv2.imread('testing_images/card14.jpg')
+from poker_engine import check_hand, get_best_hand, get_higher_card
 
+img_orig = cv2.imread('testing_images/card10.jpg')
 
 img_resized_orig = cv2.resize(src=img_orig, dsize=None, dst=None, fx=0.35, fy=0.35)
 
@@ -116,7 +117,7 @@ def detect_suit(img):
     kernel = np.ones((3, 3), np.uint8)
     eroded = cv2.erode(src=thresh, kernel=kernel, iterations=1)
 
-    number_of_black_pixels = (W*H) - cv2.countNonZero(src=eroded)
+    number_of_black_pixels = (W * H) - cv2.countNonZero(src=eroded)
     percentage_of_black = number_of_black_pixels / (W * H) * 100
 
     if percentage_of_black > 62:
@@ -158,7 +159,8 @@ def detect_suit(img):
 
         suit = {
             spade_similarity: 'spade',
-            club_similarity: 'club'        }
+            club_similarity: 'club'
+        }
 
         # print(f'spade_similarity: {spade_similarity}')
         # print(f'club_similarity: {club_similarity}')
@@ -219,53 +221,50 @@ def locate_cards(img):
                                    thresholdType=cv2.THRESH_BINARY, blockSize=7, C=3)
     thresh = cv2.bitwise_not(src=thresh)
 
-    orig_h, orig_w = thresh.shape
+    contours, hierarchy = cv2.findContours(image=thresh, mode=cv2.RETR_EXTERNAL, method=cv2.CHAIN_APPROX_SIMPLE)
+    contours = sorted(contours, key=lambda c: cv2.contourArea(c), reverse=True)
 
-    deck = thresh.copy()
-    hand = thresh.copy()
+    present_cards = {}
 
-    deck[orig_h // 2:orig_h, 0:orig_w] = 0.0
-    hand[0:orig_h // 2, 0:orig_w] = 0.0
-
-    deck_thresh, hierarchy = cv2.findContours(image=deck, mode=cv2.RETR_EXTERNAL, method=cv2.CHAIN_APPROX_SIMPLE)
-    deck_thresh = sorted(deck_thresh, key=lambda c: cv2.contourArea(c), reverse=True)
-
-    hand_thresh, hierarchy = cv2.findContours(image=hand, mode=cv2.RETR_EXTERNAL, method=cv2.CHAIN_APPROX_SIMPLE)
-    hand_thresh = sorted(hand_thresh, key=lambda c: cv2.contourArea(c), reverse=True)
-
-    for deck_c in deck_thresh:
-        area = cv2.contourArea(deck_c)
+    for idx, c in enumerate(contours):
+        area = cv2.contourArea(c)
 
         if 20_000 < area < 150_000:
-            x, y, w, h = cv2.boundingRect(deck_c)
+            x, y, w, h = cv2.boundingRect(c)
 
-            epsilon = 0.03 * cv2.arcLength(curve=deck_c, closed=True)
+            epsilon = 0.03 * cv2.arcLength(curve=c, closed=True)
 
-            corner_points = cv2.approxPolyDP(curve=deck_c, epsilon=epsilon, closed=True)
+            corner_points = cv2.approxPolyDP(curve=c, epsilon=epsilon, closed=True)
             formatted_points = format_points(corner_points)
             ordered_points = order_points(formatted_points)
             warped_image = transform_points(ordered_points, img)
 
             suit = detect_suit(warped_image)
             number = detect_number(warped_image, suit)
-            cvzone.putTextRect(img=img, text=f'{number} {suit}', pos=(x, y), scale=2, thickness=2, colorR=(255, 130, 0))
 
-    for hand_c in hand_thresh:
-        area = cv2.contourArea(hand_c)
+            if suit == 'card_back':
+                continue
 
-        if 20_000 < area < 150_000:
-            x, y, w, h = cv2.boundingRect(hand_c)
+            correct_format = suit[0].upper() + number
+            present_cards[correct_format] = idx
 
-            epsilon = 0.03 * cv2.arcLength(curve=hand_c, closed=True)
+    combinations = check_hand(present_cards.keys())
+    best_hand = get_best_hand(combinations)
 
-            corner_points = cv2.approxPolyDP(curve=hand_c, epsilon=epsilon, closed=True)
-            formatted_points = format_points(corner_points)
-            ordered_points = order_points(formatted_points)
-            warped_image = transform_points(ordered_points, img)
+    if best_hand[1]:
+        best_hand_cards = combinations[best_hand[1]]
+        for card in best_hand_cards:
+            contour_idx = present_cards[card]
+            cv2.drawContours(image=img, contours=contours, contourIdx=contour_idx, color=(255, 0, 0), thickness=3)
 
-            suit = detect_suit(warped_image)
-            number = detect_number(warped_image, suit)
-            cvzone.putTextRect(img=img, text=f'{number} {suit}', pos=(x, y), scale=2, thickness=2, colorR=(0, 50, 255))
+        combination = best_hand_cards
+    else:
+        higher_card = get_higher_card(present_cards.keys())
+        contour_idx = present_cards[higher_card]
+        cv2.drawContours(image=img, contours=contours, contourIdx=contour_idx, color=(255, 0, 0), thickness=3)
+        combination = 'Higher card'
+
+    cvzone.putTextRect(img=img, text=f'{combination}', pos=(10, 30), scale=2, thickness=2, colorR=(255, 130, 0))
 
     cv2.imshow('cards', img)
 
